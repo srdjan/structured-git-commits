@@ -1,6 +1,7 @@
 # Structured Git Commits
-
-<img src="assets/gitlogs.jpg" width="700" alt="Git Commit Logs - Structural Data Systems">
+<p align="center">
+  <img src="assets/gitlogs.jpg" width="400" alt="Git Commit Logs - Structural Data Systems">
+</p>
 
 A complete system for turning your git history into a queryable agent memory layer without adding any external infrastructure. This repository provides two complementary skills: one for writing structured commits, and one for querying them to reconstruct context.
 
