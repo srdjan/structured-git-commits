@@ -116,41 +116,61 @@ const applyFilters = (
 // Output Formatting
 // ---------------------------------------------------------------------------
 
+const SEPARATOR = "---";
+
 const formatText = (
   commits: readonly StructuredCommit[],
   withBody: boolean,
 ): string => {
   if (commits.length === 0) return "No structured commits found.";
 
-  return commits
-    .map((c) => {
-      const lines = [
-        `${c.hash.slice(0, 8)} ${c.date.slice(0, 10)} [${c.intent ?? "?"}] ${c.type}(${c.headerScope ?? "*"}): ${c.subject}`,
-      ];
+  const formatted = commits.map((c) => {
+    const lines: string[] = [];
 
-      if (c.scope.length > 0) {
-        lines.push(`  Scope: ${c.scope.join(", ")}`);
+    // Header: type(scope): subject
+    lines.push(`${c.type}(${c.headerScope ?? "*"}): ${c.subject}`);
+
+    // Metadata line: hash, date, intent
+    const intent = c.intent ?? "unknown";
+    const meta = [`${c.hash.slice(0, 8)}`, c.date.slice(0, 10), intent];
+    if (c.session) meta.push(c.session);
+    lines.push(`  ${meta.join("  ")}`);
+
+    // Scope
+    if (c.scope.length > 0) {
+      lines.push(`  scope: ${c.scope.join(", ")}`);
+    }
+
+    // Body
+    if (withBody && c.body) {
+      lines.push("");
+      for (const bodyLine of c.body.split("\n")) {
+        lines.push(`  ${bodyLine}`);
       }
+    }
 
-      if (withBody && c.body) {
-        const bodyLines = c.body.split("\n").map((l) => `  ${l}`);
-        lines.push("");
-        lines.push(...bodyLines);
+    // Decisions (visually distinct)
+    if (c.decidedAgainst.length > 0) {
+      lines.push("");
+      for (const d of c.decidedAgainst) {
+        lines.push(`  [-] ${d}`);
       }
+    }
 
-      if (c.decidedAgainst.length > 0) {
-        for (const d of c.decidedAgainst) {
-          lines.push(`  x ${d}`);
-        }
-      }
+    // Refs
+    if (c.refs.length > 0) {
+      lines.push(`  refs: ${c.refs.join(", ")}`);
+    }
 
-      if (c.session) {
-        lines.push(`  Session: ${c.session}`);
-      }
+    // Breaking
+    if (c.breaking) {
+      lines.push(`  BREAKING: ${c.breaking}`);
+    }
 
-      return lines.join("\n");
-    })
-    .join("\n\n");
+    return lines.join("\n");
+  });
+
+  return formatted.join(`\n${SEPARATOR}\n`);
 };
 
 const formatJson = (commits: readonly StructuredCommit[]): string =>
