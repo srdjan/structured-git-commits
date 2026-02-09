@@ -2,7 +2,8 @@
   "tasks": {
     "validate": "deno run --allow-read scripts/validate-commit.ts",
     "parse": "deno run --allow-run scripts/parse-commits.ts",
-    "test": "deno test --allow-read --allow-run",
-    "hook:install": "deno run --allow-read --allow-write --allow-run scripts/install-hooks.ts"
+    "test": "deno test --allow-read --allow-run --allow-write",
+    "hook:install": "deno run --allow-read --allow-write --allow-run scripts/install-hooks.ts",
+    "retrofit": "deno run --allow-read --allow-run --allow-write --allow-env --allow-net scripts/retrofit-commits.ts"
   }
 }

@@ -92,6 +92,28 @@ export interface ParseError {
 }
 
 // ---------------------------------------------------------------------------
+// Retrofit Types
+// ---------------------------------------------------------------------------
+
+export interface CommitExtract {
+  readonly hash: string;
+  readonly date: string;
+  readonly author: string;
+  readonly message: string;
+  readonly stat: string;
+  readonly shortstat: string;
+}
+
+export interface RetrofitResult {
+  readonly extract: CommitExtract;
+  readonly generated: string | null;
+  readonly diagnostics: readonly Diagnostic[];
+  readonly retried: boolean;
+  readonly cached: boolean;
+  readonly error: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // Result Type
 // ---------------------------------------------------------------------------
 
