@@ -87,9 +87,23 @@
   - Follow-up queries are generated automatically (recursive sub-calls)
   - Bridge context is summarized by the LLM
 
-  Configure: deno task rlm:configure -- --enable --check
-  Disable:   deno task rlm:configure -- --disable
-  Config stored at .git/info/rlm-config.json (not committed)
+  Setup (requires Ollama installed and running):
+    ollama pull qwen2.5:7b
+    deno task rlm:configure -- --enable --check
+
+  Configuration:
+    deno task rlm:configure                             # show current config
+    deno task rlm:configure -- --disable                # disable LLM mode
+    deno task rlm:configure -- --model=llama3.2:3b      # change model
+    deno task rlm:configure -- --timeout=10000          # adjust timeout (ms)
+    deno task rlm:configure -- --endpoint=http://...    # custom endpoint
+
+  Config stored at .git/info/rlm-config.json (local, not committed)
+
+  The active mode is indicated in the git-memory-context XML tag:
+  - mode="llm-enhanced": local LLM is active
+  - mode="prompt-aware": keyword matching (LLM disabled or unreachable)
+  - mode="recency": basic fallback (no trailer index or signals)
 
   Latency: adds ~1-3s to prompt processing when enabled.
   Fallback: if Ollama is unreachable, silently falls back to keyword mode.

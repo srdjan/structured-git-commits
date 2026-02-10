@@ -98,7 +98,19 @@ This copies 16 script files, merges 3 Claude Code hook definitions into `.claude
 
 The script is idempotent: running it again upgrades in place without duplicating entries. Use `--skip-hooks` if the target project manages `.claude/settings.json` separately.
 
-After installing, start a Claude Code session in the target project. The hooks begin injecting context automatically. For optional local LLM enhancement, run `deno task rlm:configure -- --enable --check` in the target.
+After installing, start a Claude Code session in the target project. The hooks begin injecting context automatically using keyword-based matching.
+
+**Optional: Enable Local LLM Enhancement**
+
+For smarter prompt analysis and recursive context extraction, enable local LLM mode (requires Ollama):
+
+```bash
+# In the target project
+ollama pull qwen2.5:7b
+deno task rlm:configure -- --enable --check
+```
+
+See [Local LLM Mode](#local-llm-mode) for detailed setup instructions and troubleshooting.
 
 ### Manual
 
@@ -275,17 +287,163 @@ This should produce a `<git-memory-context>` block with recent commits and decis
 
 ### Local LLM Mode
 
-Enable Ollama-powered prompt analysis and recursive sub-calls for richer context extraction:
+The system can use a local LLM (Ollama) to enhance git memory context extraction. When enabled, the hooks perform smart prompt analysis, generate recursive follow-up queries, and summarize bridge context using a locally-run model instead of keyword matching.
+
+#### Prerequisites
+
+1. Install Ollama from [ollama.com](https://ollama.com) if not already installed
+2. Start the Ollama service (it runs on `localhost:11434` by default)
+3. Pull the default model (qwen2.5:7b):
 
 ```bash
-# Enable and test connectivity
-deno task rlm:configure -- --enable --check
+ollama pull qwen2.5:7b
+```
 
-# Disable
+The default model is qwen2.5:7b because it provides a good balance of speed and quality for git context analysis. You can use any Ollama model (llama3.2:3b for faster but less accurate results, or larger models if you have the resources).
+
+#### Setup
+
+Enable local LLM mode and verify connectivity:
+
+```bash
+deno task rlm:configure -- --enable --check
+```
+
+This will:
+- Enable LLM-enhanced mode in `.git/info/rlm-config.json`
+- Test connectivity to Ollama
+- Confirm the model responds correctly
+
+You should see output like:
+
+```
+Current RLM config:
+  enabled:   true
+  endpoint:  http://localhost:11434
+  model:     qwen2.5:7b
+  timeoutMs: 5000
+  maxTokens: 256
+
+Checking http://localhost:11434 with model qwen2.5:7b...
+Connected. Response: "ok"
+```
+
+#### Verify It's Working
+
+In your next Claude Code session, the UserPromptSubmit hook will indicate which mode is active. Look for the mode attribute in the git context:
+
+```xml
+<git-memory-context mode="llm-enhanced">
+```
+
+If Ollama is unreachable, the system falls back silently to prompt-aware or recency mode.
+
+#### Configuration Options
+
+View current config:
+
+```bash
+deno task rlm:configure
+```
+
+Change the model (useful for speed/quality trade-offs):
+
+```bash
+# Faster but less accurate
+deno task rlm:configure -- --model=llama3.2:3b
+
+# Larger model for better analysis
+deno task rlm:configure -- --model=qwen2.5:14b
+```
+
+Adjust timeout (if your model is slow to respond):
+
+```bash
+deno task rlm:configure -- --timeout=10000  # 10 seconds
+```
+
+Change endpoint (if Ollama runs on a different host):
+
+```bash
+deno task rlm:configure -- --endpoint=http://192.168.1.100:11434
+```
+
+Disable LLM mode:
+
+```bash
 deno task rlm:configure -- --disable
 ```
 
-Config is stored at `.git/info/rlm-config.json` (not committed). Adds ~1-3s latency per prompt. Falls back silently to keyword mode if Ollama is unreachable.
+#### Troubleshooting
+
+**"Failed: Connection refused"**
+
+Ollama is not running. Start it with:
+
+```bash
+ollama serve
+```
+
+**"Failed: model 'qwen2.5:7b' not found"**
+
+Pull the model:
+
+```bash
+ollama pull qwen2.5:7b
+```
+
+**Hook timeout or very slow responses**
+
+The default timeout is 5000ms (5 seconds). If your machine is slow or the model is large, increase the timeout:
+
+```bash
+deno task rlm:configure -- --timeout=10000
+```
+
+Or switch to a smaller, faster model:
+
+```bash
+ollama pull llama3.2:3b
+deno task rlm:configure -- --model=llama3.2:3b
+```
+
+**Not sure if LLM mode is active**
+
+Check the mode in the git context injected before prompts. The XML tag will show `mode="llm-enhanced"` when active, `mode="prompt-aware"` for keyword matching, or `mode="recency"` for the basic fallback.
+
+You can also manually run the context script:
+
+```bash
+deno task context
+```
+
+And check the output for the mode attribute.
+
+#### Performance Impact
+
+LLM-enhanced mode adds 1-3 seconds of latency to prompt processing (depending on model size and hardware). The local model handles:
+- Analyzing your prompt to extract relevant scopes and intent
+- Generating 0-2 follow-up queries based on prompt content
+- Summarizing bridge context after tool use
+
+This happens before Claude sees your prompt, so you'll notice a slight delay before Claude starts responding. The delay is consistent and bounded by the configured timeout.
+
+If the added latency is unacceptable, you can disable LLM mode and fall back to prompt-aware (keyword-based) or recency mode, which have negligible overhead.
+
+#### Config Storage
+
+Configuration is stored at `.git/info/rlm-config.json` (local, not committed). Each repository can have independent settings. The default config when no file exists:
+
+```json
+{
+  "version": 1,
+  "enabled": false,
+  "endpoint": "http://localhost:11434",
+  "model": "qwen2.5:7b",
+  "timeoutMs": 5000,
+  "maxTokens": 256
+}
+```
 
 ### Working Memory
 
