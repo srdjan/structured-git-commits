@@ -1,6 +1,7 @@
 /**
  * Structured Git Commit Parser - CLI
  *
+ * Thin CLI wrapper over the composable query library.
  * Parses git log output into structured commit objects with typed trailers.
  * Designed for agent memory reconstruction from commit history.
  *
@@ -9,28 +10,37 @@
  *
  * Options:
  *   --limit=N                  Number of commits to parse (default: 50)
- *   --intent=TYPE              Filter by intent type
- *   --scope=PATTERN            Filter by scope (substring match)
+ *   --intent=TYPE              Filter by intent type (repeatable for OR)
+ *   --scope=PATTERN            Filter by scope (hierarchical prefix match)
  *   --session=ID               Filter by session identifier
  *   --decisions-only           Show only commits with Decided-Against trailers
- *   --decided-against=KEYWORD  Filter commits where Decided-Against contains keyword
+ *   --decided-against=KEYWORD  Filter commits where Decided-Against contains keyword (word boundary)
  *   --with-body                Include commit body in text output
  *   --format=json|text         Output format (default: text)
  *   --since=DATE               Git --since filter
+ *   --since-commit=HASH        Ancestry-based boundary (uses commit-graph generation numbers)
  *   --path=PATH                Git -- path filter
+ *   --no-index                 Skip trailer index even if available
  */
 
 import type { IntentType, StructuredCommit } from "./types.ts";
 import { Result } from "./types.ts";
 import { isIntentType, parseCommitBlock } from "./lib/parser.ts";
+import { loadIndex } from "./build-trailer-index.ts";
+import {
+  applyQueryFilters,
+  canUseIndex,
+  queryIndexForHashes,
+  type QueryParams,
+} from "./lib/query.ts";
 
 // ---------------------------------------------------------------------------
-// Git Integration
+// CLI Types
 // ---------------------------------------------------------------------------
 
 interface CliOptions {
   readonly limit: number;
-  readonly intent: IntentType | null;
+  readonly intents: readonly IntentType[];
   readonly scope: string | null;
   readonly session: string | null;
   readonly decisionsOnly: boolean;
@@ -38,8 +48,14 @@ interface CliOptions {
   readonly withBody: boolean;
   readonly format: "json" | "text";
   readonly since: string | null;
+  readonly sinceCommit: string | null;
   readonly path: string | null;
+  readonly noIndex: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Git Integration
+// ---------------------------------------------------------------------------
 
 const buildGitArgs = (options: CliOptions): string[] => {
   const args = [
@@ -49,8 +65,15 @@ const buildGitArgs = (options: CliOptions): string[] => {
   ];
 
   if (options.since) args.push(`--since=${options.since}`);
-  if (options.intent) args.push(`--grep=Intent: ${options.intent}`);
+
+  // Single intent can use git --grep pre-filter. Multiple intents conflict
+  // with git's OR semantics across --grep patterns, so we filter post-parse.
+  if (options.intents.length === 1) {
+    args.push(`--grep=Intent: ${options.intents[0]}`);
+  }
+
   if (options.session) args.push(`--grep=Session: ${options.session}`);
+  if (options.sinceCommit) args.push(`${options.sinceCommit}..HEAD`);
   if (options.path) {
     args.push("--");
     args.push(options.path);
@@ -58,6 +81,13 @@ const buildGitArgs = (options: CliOptions): string[] => {
 
   return args;
 };
+
+const buildGitArgsForHashes = (hashes: readonly string[]): string[] => [
+  "log",
+  "--format=---commit---%nHash: %H%nDate: %aI%nSubject: %s%n%b",
+  "--no-walk",
+  ...(hashes as string[]),
+];
 
 const execGitLog = async (
   args: readonly string[],
@@ -79,37 +109,6 @@ const execGitLog = async (
   } catch (e) {
     return Result.fail(e as Error);
   }
-};
-
-// ---------------------------------------------------------------------------
-// Filtering
-// ---------------------------------------------------------------------------
-
-const applyFilters = (
-  commits: readonly StructuredCommit[],
-  options: CliOptions,
-): readonly StructuredCommit[] => {
-  let filtered = [...commits];
-
-  if (options.scope) {
-    const pattern = options.scope.toLowerCase();
-    filtered = filtered.filter((c) =>
-      c.scope.some((s) => s.toLowerCase().includes(pattern))
-    );
-  }
-
-  if (options.decisionsOnly) {
-    filtered = filtered.filter((c) => c.decidedAgainst.length > 0);
-  }
-
-  if (options.decidedAgainst) {
-    const keyword = options.decidedAgainst.toLowerCase();
-    filtered = filtered.filter((c) =>
-      c.decidedAgainst.some((d) => d.toLowerCase().includes(keyword))
-    );
-  }
-
-  return filtered;
 };
 
 // ---------------------------------------------------------------------------
@@ -177,7 +176,7 @@ const formatJson = (commits: readonly StructuredCommit[]): string =>
   JSON.stringify(commits, null, 2);
 
 // ---------------------------------------------------------------------------
-// CLI
+// CLI Argument Parsing
 // ---------------------------------------------------------------------------
 
 const parseCliArgs = (args: string[]): CliOptions => {
@@ -186,10 +185,14 @@ const parseCliArgs = (args: string[]): CliOptions => {
     return arg ? arg.split("=").slice(1).join("=") : null;
   };
 
+  const getAll = (key: string): string[] =>
+    args
+      .filter((a) => a.startsWith(`--${key}=`))
+      .map((a) => a.split("=").slice(1).join("="));
+
   const has = (key: string): boolean => args.includes(`--${key}`);
 
-  const intentRaw = get("intent");
-  const intent = intentRaw && isIntentType(intentRaw) ? intentRaw : null;
+  const intents = getAll("intent").filter(isIntentType) as IntentType[];
 
   const formatRaw = get("format");
   const format = formatRaw === "json" ? "json" : "text";
@@ -197,13 +200,15 @@ const parseCliArgs = (args: string[]): CliOptions => {
   const limitRaw = get("limit");
   const limit = limitRaw !== null ? parseInt(limitRaw, 10) : 50;
   if (Number.isNaN(limit) || limit <= 0) {
-    console.error(`Invalid --limit value: "${limitRaw}". Must be a positive integer.`);
+    console.error(
+      `Invalid --limit value: "${limitRaw}". Must be a positive integer.`,
+    );
     Deno.exit(2);
   }
 
   return {
     limit,
-    intent,
+    intents,
     scope: get("scope"),
     session: get("session"),
     decisionsOnly: has("decisions-only"),
@@ -211,26 +216,28 @@ const parseCliArgs = (args: string[]): CliOptions => {
     withBody: has("with-body"),
     format,
     since: get("since"),
+    sinceCommit: get("since-commit"),
     path: get("path"),
+    noIndex: has("no-index"),
   };
 };
 
 // ---------------------------------------------------------------------------
-// Main
+// Helpers
 // ---------------------------------------------------------------------------
 
-const main = async (): Promise<void> => {
-  const options = parseCliArgs(Deno.args);
+/** Convert CLI options to the library's QueryParams. */
+const toQueryParams = (options: CliOptions): QueryParams => ({
+  intents: options.intents,
+  scope: options.scope,
+  session: options.session,
+  decisionsOnly: options.decisionsOnly,
+  decidedAgainst: options.decidedAgainst,
+  limit: options.limit,
+});
 
-  const gitArgs = buildGitArgs(options);
-  const logResult = await execGitLog(gitArgs);
-
-  if (!logResult.ok) {
-    console.error(`Error: ${logResult.error.message}`);
-    Deno.exit(1);
-  }
-
-  const blocks = logResult.value
+const parseGitOutput = (raw: string) => {
+  const blocks = raw
     .split("---commit---")
     .filter((b) => b.trim().length > 0);
 
@@ -241,10 +248,81 @@ const main = async (): Promise<void> => {
     .map((r) => r.value);
 
   const errors = results
-    .filter((r): r is { ok: false; error: import("./types.ts").ParseError } => !r.ok)
+    .filter(
+      (r): r is { ok: false; error: import("./types.ts").ParseError } => !r.ok,
+    )
     .map((r) => r.error);
 
-  const filtered = applyFilters(commits, options);
+  return { commits, errors };
+};
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+const main = async (): Promise<void> => {
+  const options = parseCliArgs(Deno.args);
+  const params = toQueryParams(options);
+
+  // Try index-based query for trailer filters
+  if (canUseIndex(params, { noIndex: options.noIndex, path: options.path })) {
+    const indexResult = await loadIndex();
+
+    if (indexResult.ok && indexResult.value !== null) {
+      const indexHashes = queryIndexForHashes(indexResult.value, params);
+
+      if (indexHashes.length > 0) {
+        const gitArgs = buildGitArgsForHashes(indexHashes);
+        const logResult = await execGitLog(gitArgs);
+
+        if (logResult.ok) {
+          const { commits, errors } = parseGitOutput(logResult.value);
+
+          // Index pre-filtered by intent/session/scope keys, but apply
+          // full precision filters (word boundary for decided-against,
+          // hierarchical prefix for scope on multi-scope commits)
+          const filtered = applyQueryFilters(commits, params);
+
+          const output = options.format === "json"
+            ? formatJson(filtered)
+            : formatText(filtered, options.withBody);
+
+          console.log(output);
+
+          if (errors.length > 0 && options.format === "text") {
+            console.error(
+              `\n${errors.length} commit(s) could not be parsed (non-structured or malformed)`,
+            );
+          }
+          return;
+        }
+        // If git log for hashes failed, fall through to standard path
+      } else {
+        // Index is fresh but no matches
+        console.log(
+          options.format === "json" ? "[]" : "No structured commits found.",
+        );
+        return;
+      }
+    }
+    // Index unavailable, fall through
+  }
+
+  // Standard git log path (no index or path-based query)
+  const gitArgs = buildGitArgs(options);
+  const logResult = await execGitLog(gitArgs);
+
+  if (!logResult.ok) {
+    console.error(`Error: ${logResult.error.message}`);
+    Deno.exit(1);
+  }
+
+  const { commits, errors } = parseGitOutput(logResult.value);
+
+  // Apply all filters. For the git-log path, git --grep handles single-intent
+  // pre-filtering, but we still need library filters for multi-intent,
+  // scope precision, and decided-against word boundaries.
+  const filtered = applyQueryFilters(commits, params);
 
   const output = options.format === "json"
     ? formatJson(filtered)

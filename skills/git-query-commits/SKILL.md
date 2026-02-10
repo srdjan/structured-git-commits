@@ -204,19 +204,22 @@ The parse-commits CLI (available via `deno task parse`) provides structured filt
 **Available filters:**
 
 ```bash
-# Intent filtering
+# Intent filtering (repeatable, OR semantics across intents)
 deno task parse --intent=enable-capability
-deno task parse --intent=fix-defect --intent=resolve-blocker  # Multiple intents
+deno task parse --intent=fix-defect --intent=resolve-blocker  # Union of both
 
-# Scope filtering (domain-level)
+# Scope filtering (hierarchical prefix match)
+# "auth" matches "auth", "auth/registration", "auth/login"
+# but NOT "oauth/provider" or "unauthorized"
 deno task parse --scope=auth
 deno task parse --scope=orders/pricing
 
-# Decision archaeology (highest value for avoiding repeated work)
+# Decision archaeology (word-boundary matching)
+# "redis" matches "Redis pub/sub" but NOT "predis" or "redistribution"
 deno task parse --decided-against=redis
 deno task parse --decided-against=oauth --with-body
 
-# Session filtering
+# Session filtering (exact match)
 deno task parse --session=2025-02-08/feature-name
 
 # Time filtering
@@ -251,6 +254,74 @@ deno task parse --scope=orders/pricing --intent=improve-quality
 # Infrastructure changes in the last month
 deno task parse --intent=configure-infra --since='1 month ago'
 ```
+
+**Composable query library** (`scripts/lib/query.ts`):
+
+For programmatic use (MCP tools, agent sandboxes, RLM environments), query operations are available as composable pure functions independent of the CLI:
+
+```typescript
+import { filterByIntents, filterByScope, applyQueryFilters } from "./scripts/lib/query.ts";
+
+// Compose filters manually
+const result = filterByScope("auth")(filterByIntents(["fix-defect"])(commits));
+
+// Or use the all-in-one composition
+const result = applyQueryFilters(commits, {
+  intents: ["fix-defect", "resolve-blocker"],
+  scope: "auth",
+  session: null,
+  decisionsOnly: false,
+  decidedAgainst: null,
+  limit: 50,
+});
+
+// Index-based query (O(1) lookups)
+import { queryIndexForHashes } from "./scripts/lib/query.ts";
+const hashes = queryIndexForHashes(index, params);
+```
+
+## Performance
+
+Two optional optimizations accelerate different query patterns. Neither is required - queries work without them - but they reduce latency as repositories grow.
+
+**Commit-graph** accelerates path-based queries (`--path=`) via changed-paths Bloom filters and enables fast ancestry checks (`--since-commit=`). It does NOT speed up `--grep` searches, which are the primary pattern for trailer-based queries.
+
+**Trailer index** accelerates content-based queries (`--intent=`, `--scope=`, `--session=`, `--decisions-only`) by precomputing an inverted index of trailer values to commit hashes. Lookups become O(1) instead of O(n) grep scans.
+
+**When to enable:**
+
+- Enable commit-graph for repositories with 500+ commits using path-based queries
+- Enable trailer index for repositories with 100+ structured commits using frequent trailer queries
+- Both have negligible storage cost and fast build times
+
+**Maintenance commands:**
+
+```bash
+# Write commit-graph (path queries, ancestry checks)
+deno task graph:write
+
+# Build trailer index (intent, scope, session, decided-against queries)
+deno task index:build
+
+# Both at once
+deno task optimize
+```
+
+**New query capability - ancestry boundary:**
+
+```bash
+# All commits since a known ancestor (uses generation numbers, not dates)
+deno task parse -- --since-commit=abc123 --intent=fix-defect
+```
+
+**Bypassing the index:**
+
+```bash
+# Force standard git log path (for debugging or verification)
+deno task parse -- --intent=fix-defect --no-index
+```
+
+See [references/performance.md](references/performance.md) for detailed scaling characteristics and freshness model.
 
 ## Integration with git-structure-commits
 

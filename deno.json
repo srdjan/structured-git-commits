@@ -1,9 +1,15 @@
 {
   "tasks": {
     "validate": "deno run --allow-read scripts/validate-commit.ts",
-    "parse": "deno run --allow-run scripts/parse-commits.ts",
+    "parse": "deno run --allow-run --allow-read scripts/parse-commits.ts",
     "test": "deno test --allow-read --allow-run --allow-write",
     "hook:install": "deno run --allow-read --allow-write --allow-run scripts/install-hooks.ts",
-    "retrofit": "deno run --allow-read --allow-run --allow-write --allow-env --allow-net scripts/retrofit-commits.ts"
+    "retrofit": "deno run --allow-read --allow-run --allow-write --allow-env --allow-net scripts/retrofit-commits.ts",
+    "graph:write": "deno run --allow-run --allow-read scripts/maintain-commit-graph.ts",
+    "graph:verify": "deno run --allow-run scripts/maintain-commit-graph.ts --verify",
+    "graph:stats": "deno run --allow-run --allow-read scripts/maintain-commit-graph.ts --stats",
+    "index:build": "deno run --allow-run --allow-read --allow-write scripts/build-trailer-index.ts",
+    "index:check": "deno run --allow-run --allow-read scripts/build-trailer-index.ts --check",
+    "optimize": "deno run --allow-run --allow-read scripts/maintain-commit-graph.ts && deno run --allow-run --allow-read --allow-write scripts/build-trailer-index.ts"
   }
 }

@@ -127,6 +127,32 @@ export const Result = {
 };
 
 // ---------------------------------------------------------------------------
+// Trailer Index Types
+// ---------------------------------------------------------------------------
+
+export interface IndexedCommit {
+  readonly hash: string;
+  readonly date: string;
+  readonly subject: string;
+  readonly intent: IntentType | null;
+  readonly scope: readonly string[];
+  readonly session: string | null;
+  readonly decidedAgainst: readonly string[];
+}
+
+export interface TrailerIndex {
+  readonly version: 1;
+  readonly generated: string;
+  readonly headCommit: string;
+  readonly commitCount: number;
+  readonly byIntent: Partial<Record<IntentType, readonly string[]>>;
+  readonly byScope: Record<string, readonly string[]>;
+  readonly bySession: Record<string, readonly string[]>;
+  readonly withDecidedAgainst: readonly string[];
+  readonly commits: Record<string, IndexedCommit>;
+}
+
+// ---------------------------------------------------------------------------
 // Validation Types
 // ---------------------------------------------------------------------------
 
