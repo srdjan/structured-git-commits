@@ -31,6 +31,32 @@ Do NOT query history for:
 - Cases where the user has already provided complete context
 - Simple, well-understood changes that don't touch existing logic
 
+## Automatic Context via Hook
+
+When installed as a Claude Code project, a `UserPromptSubmit` hook automatically injects recent git history context before every prompt. This provides a passive floor of always-available information without requiring the agent to actively decide to query.
+
+**What gets injected:**
+
+The hook produces a `<git-memory-context>` block containing:
+- Recent decided-against entries with their scopes (up to 20)
+- Recent commit subjects with scopes (last 10)
+- Current session info if `STRUCTURED_GIT_SESSION` is set
+
+**How it works:**
+
+The hook script (`scripts/git-memory-context.ts`) loads the trailer index for fast file-based lookups. If the index is stale or missing, it falls back to `git log` with `parseCommitBlock`. The script always exits 0 and produces empty output on errors, so it never blocks the user.
+
+**How it complements manual queries:**
+
+The auto-injected context is a compact summary - enough to know that relevant history exists, but not detailed enough for deep investigation. When the injected context mentions a relevant scope or decision, use the manual query patterns below to drill into specifics with `--with-body`.
+
+**Installing in other projects:**
+
+1. Copy `scripts/git-memory-context.ts` and its dependencies (`scripts/types.ts`, `scripts/lib/parser.ts`, `scripts/build-trailer-index.ts`) into the target project
+2. Create `.claude/settings.json` with the `UserPromptSubmit` hook pointing to the script
+3. Add the `<git-memory>` section from `CLAUDE.md` to the project's own CLAUDE.md
+4. Ensure `deno` is available in the project environment
+
 ## Query Patterns by Scenario
 
 ### Scenario 1: Stuck on a Bug

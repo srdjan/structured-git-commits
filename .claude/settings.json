@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "deno run --allow-run --allow-read --allow-env scripts/git-memory-context.ts"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -10,6 +10,7 @@
     "graph:stats": "deno run --allow-run --allow-read scripts/maintain-commit-graph.ts --stats",
     "index:build": "deno run --allow-run --allow-read --allow-write scripts/build-trailer-index.ts",
     "index:check": "deno run --allow-run --allow-read scripts/build-trailer-index.ts --check",
-    "optimize": "deno run --allow-run --allow-read scripts/maintain-commit-graph.ts && deno run --allow-run --allow-read --allow-write scripts/build-trailer-index.ts"
+    "optimize": "deno run --allow-run --allow-read scripts/maintain-commit-graph.ts && deno run --allow-run --allow-read --allow-write scripts/build-trailer-index.ts",
+    "context": "deno run --allow-run --allow-read --allow-env scripts/git-memory-context.ts"
   }
 }

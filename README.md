@@ -239,6 +239,43 @@ if [ -n "$STRUCTURED_GIT_SESSION" ]; then
 fi
 ```
 
+### Claude Code Hook (Auto-Context)
+
+A `UserPromptSubmit` hook can inject recent git history context before every Claude prompt automatically. This implements the RLM pattern: Claude receives a compact summary of recent commits, decisions, and session info without having to actively query.
+
+**What it does:** On every prompt, the hook runs `scripts/git-memory-context.ts`, which loads the trailer index (or falls back to git log) and outputs a `<git-memory-context>` block that Claude sees as injected context. This includes recent decided-against entries, recent commit subjects with scopes, and current session info.
+
+**Installation:**
+
+1. The hook configuration lives in `.claude/settings.json` (already included in this repository):
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "deno run --allow-run --allow-read --allow-env scripts/git-memory-context.ts"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+2. Add the `<git-memory>` instructions from `CLAUDE.md` to your project's CLAUDE.md so Claude knows how to use the injected context and when to query deeper.
+
+3. Verify it works by running manually:
+
+```bash
+deno task context
+```
+
+This should produce a `<git-memory-context>` block with recent commits and decisions. In a live Claude Code session, this output is automatically injected before Claude processes each prompt.
+
 ### Project-Specific Installation
 
 Add this repository as a git submodule or copy the files into your project's documentation. Reference the format in your CONTRIBUTING.md or development guidelines.
