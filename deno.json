@@ -16,6 +16,10 @@
     "memory:clear": "deno run --allow-run --allow-read --allow-write scripts/working-memory-write.ts --clear",
     "memory:consolidate": "deno run --allow-run --allow-read --allow-write --allow-env scripts/git-memory-consolidate.ts",
     "rlm:configure": "deno run --allow-run --allow-read --allow-write --allow-net scripts/rlm-configure.ts",
-    "rlm:install": "deno run --allow-read --allow-write --allow-run scripts/install-rlm.ts"
+    "rlm:install": "deno run --allow-read --allow-write --allow-run scripts/install-rlm.ts",
+    "bench:context": "deno run --allow-run --allow-read --allow-write --allow-env --allow-net scripts/benchmark-context.ts",
+    "bench:score:retrieval": "deno run --allow-read --allow-write scripts/benchmark-score-retrieval.ts",
+    "bench:responses": "deno run --allow-read --allow-write --allow-env --allow-net scripts/benchmark-generate-responses.ts",
+    "bench:score:responses": "deno run --allow-read --allow-write --allow-env --allow-net scripts/benchmark-score-responses.ts"
   }
 }

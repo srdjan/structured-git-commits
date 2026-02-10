@@ -15,6 +15,7 @@ A complete system for turning your git history into a queryable agent memory lay
 - [Claude Code Hooks](#claude-code-hooks)
 - [Retrofitting Existing Commits](#retrofitting-existing-commits)
 - [Intent Taxonomy](#intent-taxonomy)
+- [Benchmarking](#benchmarking)
 - [Trailer Reference](#trailer-reference)
 - [Performance](#performance)
 - [Customization](#customization)
@@ -498,6 +499,19 @@ Every commit must include exactly one intent from this vocabulary:
 | `resolve-blocker` | Unblocking a dependent task or workflow |
 
 See [references/intent-taxonomy.md](skills/git-structure-commits/references/intent-taxonomy.md) for detailed definitions and usage guidance.
+
+## Benchmarking
+
+To empirically compare `llm-enhanced` vs `prompt-aware` vs `recency` modes, use the benchmark scripts in `bench/` and `scripts/benchmark-*.ts`.
+
+Quick start:
+
+```bash
+deno task bench:context -- --dataset=bench/prompts.real.jsonl --out-dir=bench/results/run-001 --runs=3 --models=gemma2:3b,qwen2.5:7b
+deno task bench:score:retrieval -- --dataset=bench/prompts.real.jsonl --runs=bench/results/run-001/runs.jsonl --trace=bench/results/run-001/trace.jsonl --out=bench/results/run-001/retrieval-report.json
+```
+
+For full methodology (dataset labeling, response-quality scoring, latency analysis, model sweeps, and variable controls), see [bench/README.md](bench/README.md).
 
 ## Trailer Reference
 

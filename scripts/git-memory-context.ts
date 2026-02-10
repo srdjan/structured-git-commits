@@ -27,15 +27,22 @@ import type { IndexedCommit, TrailerIndex } from "./types.ts";
 import { Result } from "./types.ts";
 import { loadIndex } from "./build-trailer-index.ts";
 import { parseCommitBlock } from "./lib/parser.ts";
-import { extractPromptSignals, type PromptSignals } from "./lib/prompt-analyzer.ts";
+import {
+  extractPromptSignals,
+  type PromptSignals,
+} from "./lib/prompt-analyzer.ts";
 import { scopeMatches, wordBoundaryMatch } from "./lib/matching.ts";
-import { formatWorkingMemory, loadWorkingMemory } from "./lib/working-memory.ts";
+import {
+  formatWorkingMemory,
+  loadWorkingMemory,
+} from "./lib/working-memory.ts";
 import { loadRlmConfig } from "./lib/rlm-config.ts";
 import {
   analyzePromptWithLlm,
+  type FollowUpQuery,
   generateFollowUpQueries,
-  summarizeContext,
   type LlmPromptSignals,
+  summarizeContext,
 } from "./lib/rlm-subcalls.ts";
 
 // ---------------------------------------------------------------------------
@@ -46,6 +53,30 @@ const MAX_RECENT_COMMITS = 10;
 const MAX_DECISIONS = 20;
 const MAX_PROMPT_AWARE_COMMITS = 15;
 const MAX_PROMPT_AWARE_DECISIONS = 10;
+
+interface BenchTraceLatencies {
+  readonly total: number;
+  readonly analyzePrompt?: number;
+  readonly generateFollowUps?: number;
+  readonly summarizeContext?: number;
+}
+
+interface BenchTraceRecord {
+  readonly timestamp: string;
+  readonly prompt: string;
+  readonly promptId: string | null;
+  readonly runId: string | null;
+  readonly mode: "prompt-aware" | "recency" | "llm-enhanced";
+  readonly configuredModel: string | null;
+  readonly llmSignals?: LlmPromptSignals;
+  readonly promptSignals?: PromptSignals;
+  readonly followUpQueries?: readonly FollowUpQuery[];
+  readonly initialHashes: readonly string[];
+  readonly followUpAddedHashes: readonly string[];
+  readonly finalHashes: readonly string[];
+  readonly decisionsCount: number;
+  readonly latenciesMs: BenchTraceLatencies;
+}
 
 // ---------------------------------------------------------------------------
 // Stdin Reading
@@ -70,6 +101,29 @@ const readPrompt = async (): Promise<string> => {
       // ignore
     }
     return "";
+  }
+};
+
+const isBenchTraceEnabled = (): boolean => {
+  const raw = (Deno.env.get("RLM_BENCH_TRACE") ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+};
+
+const getBenchTracePath = (): string =>
+  Deno.env.get("RLM_BENCH_TRACE_FILE") ?? ".git/info/rlm-benchmark-trace.jsonl";
+
+const appendBenchTrace = async (record: BenchTraceRecord): Promise<void> => {
+  if (!isBenchTraceEnabled()) return;
+
+  try {
+    const path = getBenchTracePath();
+    const slash = path.lastIndexOf("/");
+    const dir = slash >= 0 ? path.slice(0, slash) : ".";
+    await Deno.mkdir(dir, { recursive: true });
+    const line = `${JSON.stringify(record)}\n`;
+    await Deno.writeTextFile(path, line, { append: true, create: true });
+  } catch {
+    // Bench tracing must never interfere with hook behavior.
   }
 };
 
@@ -116,8 +170,23 @@ interface ContextData {
     readonly scope: readonly string[];
   }[];
   readonly decisions: readonly DecisionEntry[];
-  readonly session: { readonly id: string; readonly commitCount: number } | null;
+  readonly session:
+    | { readonly id: string; readonly commitCount: number }
+    | null;
   readonly summary?: string;
+}
+
+interface LlmPathResult {
+  readonly data: ContextData;
+  readonly trace: {
+    readonly model: string;
+    readonly llmSignals: LlmPromptSignals;
+    readonly followUpQueries: readonly FollowUpQuery[];
+    readonly initialHashes: readonly string[];
+    readonly followUpAddedHashes: readonly string[];
+    readonly finalHashes: readonly string[];
+    readonly latenciesMs: BenchTraceLatencies;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +336,9 @@ const extractFromGitLog = async (): Promise<Result<ContextData>> => {
 
   const parsed = blocks
     .map(parseCommitBlock)
-    .filter((r): r is { ok: true; value: import("./types.ts").StructuredCommit } => r.ok)
+    .filter((
+      r,
+    ): r is { ok: true; value: import("./types.ts").StructuredCommit } => r.ok)
     .map((r) => r.value);
 
   const recentCommits = parsed.map((c) => ({
@@ -312,9 +383,7 @@ const formatContext = (data: ContextData): string => {
     if (data.decisions.length > 0) {
       lines.push("Recent decisions (decided-against):");
       for (const d of data.decisions) {
-        const scopeLabel = d.scope.length > 0
-          ? `[${d.scope.join(", ")}] `
-          : "";
+        const scopeLabel = d.scope.length > 0 ? `[${d.scope.join(", ")}] ` : "";
         lines.push(`- ${scopeLabel}${d.text}`);
       }
       lines.push("");
@@ -323,9 +392,7 @@ const formatContext = (data: ContextData): string => {
     // Recent commits section
     lines.push("Recent commits:");
     for (const c of data.recentCommits) {
-      const scopeSuffix = c.scope.length > 0
-        ? ` | ${c.scope.join(", ")}`
-        : "";
+      const scopeSuffix = c.scope.length > 0 ? ` | ${c.scope.join(", ")}` : "";
       lines.push(`${c.hash.slice(0, 7)} ${c.subject}${scopeSuffix}`);
     }
   }
@@ -334,11 +401,15 @@ const formatContext = (data: ContextData): string => {
   if (data.session) {
     lines.push("");
     lines.push(
-      `Session: ${data.session.id} (${data.session.commitCount} commit${data.session.commitCount === 1 ? "" : "s"})`,
+      `Session: ${data.session.id} (${data.session.commitCount} commit${
+        data.session.commitCount === 1 ? "" : "s"
+      })`,
     );
   }
 
-  return `<git-memory-context mode="${data.mode}">\n${lines.join("\n")}\n</git-memory-context>`;
+  return `<git-memory-context mode="${data.mode}">\n${
+    lines.join("\n")
+  }\n</git-memory-context>`;
 };
 
 // ---------------------------------------------------------------------------
@@ -382,7 +453,7 @@ const contextToText = (data: ContextData): string => {
  */
 const executeFollowUpQueries = (
   index: TrailerIndex,
-  queries: readonly import("./lib/rlm-subcalls.ts").FollowUpQuery[],
+  queries: readonly FollowUpQuery[],
   existingHashes: ReadonlySet<string>,
 ): readonly IndexedCommit[] => {
   const additional: IndexedCommit[] = [];
@@ -445,12 +516,15 @@ const tryLlmEnhancedPath = async (
   index: TrailerIndex,
   prompt: string,
   scopeKeys: readonly string[],
-): Promise<ContextData | null> => {
+): Promise<LlmPathResult | null> => {
+  const totalStart = performance.now();
   const config = await loadRlmConfig();
   if (!config.enabled) return null;
 
   // Step 1: LLM prompt analysis
+  const analyzeStart = performance.now();
   const analysisResult = await analyzePromptWithLlm(config, prompt, scopeKeys);
+  const analyzeMs = performance.now() - analyzeStart;
   if (!analysisResult.ok) return null;
 
   const llmSignals = analysisResult.value;
@@ -463,31 +537,39 @@ const tryLlmEnhancedPath = async (
   const signals = llmSignalsToPromptSignals(llmSignals);
   const initialData = extractRelevantFromIndex(index, signals);
   if (!initialData) return null;
+  const initialHashes = initialData.recentCommits.map((c) => c.hash);
 
   // Step 3: Generate follow-up queries
   const initialText = contextToText(initialData);
   const validScopes = new Set(scopeKeys);
+  const followUpStart = performance.now();
   const followUpResult = await generateFollowUpQueries(
     config,
     prompt,
     initialText,
     validScopes,
   );
+  const followUpMs = performance.now() - followUpStart;
 
   // Merge follow-up results (if follow-up generation fails, use initial data)
   let mergedCommits = [...initialData.recentCommits];
   let mergedDecisions = [...initialData.decisions];
+  const followUpQueries = followUpResult.ok ? followUpResult.value : [];
+  const followUpAddedHashes: string[] = [];
 
-  if (followUpResult.ok && followUpResult.value.length > 0) {
-    const existingHashes = new Set(initialData.recentCommits.map((c) => c.hash));
+  if (followUpQueries.length > 0) {
+    const existingHashes = new Set(
+      initialData.recentCommits.map((c) => c.hash),
+    );
     const additionalCommits = executeFollowUpQueries(
       index,
-      followUpResult.value,
+      followUpQueries,
       existingHashes,
     );
 
     // Add additional commits
     for (const c of additionalCommits) {
+      followUpAddedHashes.push(c.hash);
       mergedCommits.push({
         hash: c.hash,
         subject: c.subject,
@@ -496,7 +578,7 @@ const tryLlmEnhancedPath = async (
     }
 
     // Add additional decisions from follow-up decided-against queries
-    for (const query of followUpResult.value) {
+    for (const query of followUpQueries) {
       if (!query.decidedAgainst) continue;
       for (const hash of index.withDecidedAgainst) {
         if (mergedDecisions.length >= MAX_PROMPT_AWARE_DECISIONS) break;
@@ -520,7 +602,7 @@ const tryLlmEnhancedPath = async (
   }
 
   // Step 4: Summarize context (optional, failure uses raw context)
-  const mergedData: ContextData = {
+  let mergedData: ContextData = {
     mode: "llm-enhanced",
     recentCommits: mergedCommits,
     decisions: mergedDecisions,
@@ -528,13 +610,34 @@ const tryLlmEnhancedPath = async (
   };
 
   const mergedText = contextToText(mergedData);
+  const summarizeStart = performance.now();
   const summaryResult = await summarizeContext(config, prompt, mergedText);
+  const summarizeMs = performance.now() - summarizeStart;
 
   if (summaryResult.ok) {
-    return { ...mergedData, summary: summaryResult.value };
+    mergedData = { ...mergedData, summary: summaryResult.value };
   }
 
-  return mergedData;
+  const finalHashes = mergedData.recentCommits.map((c) => c.hash);
+  const totalMs = performance.now() - totalStart;
+
+  return {
+    data: mergedData,
+    trace: {
+      model: config.model,
+      llmSignals,
+      followUpQueries,
+      initialHashes,
+      followUpAddedHashes,
+      finalHashes,
+      latenciesMs: {
+        total: totalMs,
+        analyzePrompt: analyzeMs,
+        generateFollowUps: followUpMs,
+        summarizeContext: summarizeMs,
+      },
+    },
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -563,8 +666,14 @@ const emitContext = async (data: ContextData): Promise<void> => {
 };
 
 const main = async (): Promise<void> => {
+  const totalStart = performance.now();
   // Read the user's prompt from stdin JSON
   const prompt = await readPrompt();
+  const promptId = Deno.env.get("RLM_BENCH_PROMPT_ID") ?? null;
+  const runId = Deno.env.get("RLM_BENCH_RUN_ID") ?? null;
+  const configuredModel = isBenchTraceEnabled()
+    ? (await loadRlmConfig()).model
+    : null;
 
   // Try index path first (pure file I/O, no git subprocess)
   const indexResult = await loadIndex();
@@ -575,7 +684,22 @@ const main = async (): Promise<void> => {
     // Try LLM-enhanced path (falls back to null on any failure)
     const llmData = await tryLlmEnhancedPath(index, prompt, scopeKeys);
     if (llmData) {
-      await emitContext(llmData);
+      await emitContext(llmData.data);
+      await appendBenchTrace({
+        timestamp: new Date().toISOString(),
+        prompt,
+        promptId,
+        runId,
+        mode: "llm-enhanced",
+        configuredModel: llmData.trace.model,
+        llmSignals: llmData.trace.llmSignals,
+        followUpQueries: llmData.trace.followUpQueries,
+        initialHashes: llmData.trace.initialHashes,
+        followUpAddedHashes: llmData.trace.followUpAddedHashes,
+        finalHashes: llmData.trace.finalHashes,
+        decisionsCount: llmData.data.decisions.length,
+        latenciesMs: llmData.trace.latenciesMs,
+      });
       return;
     }
 
@@ -584,12 +708,43 @@ const main = async (): Promise<void> => {
     const promptAwareData = extractRelevantFromIndex(index, signals);
     if (promptAwareData) {
       await emitContext(promptAwareData);
+      await appendBenchTrace({
+        timestamp: new Date().toISOString(),
+        prompt,
+        promptId,
+        runId,
+        mode: "prompt-aware",
+        configuredModel,
+        promptSignals: signals,
+        initialHashes: promptAwareData.recentCommits.map((c) => c.hash),
+        followUpAddedHashes: [],
+        finalHashes: promptAwareData.recentCommits.map((c) => c.hash),
+        decisionsCount: promptAwareData.decisions.length,
+        latenciesMs: {
+          total: performance.now() - totalStart,
+        },
+      });
       return;
     }
 
     // Fall back to recency mode
     const data = extractFromIndex(index);
     await emitContext(data);
+    await appendBenchTrace({
+      timestamp: new Date().toISOString(),
+      prompt,
+      promptId,
+      runId,
+      mode: "recency",
+      configuredModel,
+      initialHashes: data.recentCommits.map((c) => c.hash),
+      followUpAddedHashes: [],
+      finalHashes: data.recentCommits.map((c) => c.hash),
+      decisionsCount: data.decisions.length,
+      latenciesMs: {
+        total: performance.now() - totalStart,
+      },
+    });
     return;
   }
 
@@ -597,6 +752,21 @@ const main = async (): Promise<void> => {
   const fallbackResult = await extractFromGitLog();
   if (fallbackResult.ok) {
     await emitContext(fallbackResult.value);
+    await appendBenchTrace({
+      timestamp: new Date().toISOString(),
+      prompt,
+      promptId,
+      runId,
+      mode: "recency",
+      configuredModel,
+      initialHashes: fallbackResult.value.recentCommits.map((c) => c.hash),
+      followUpAddedHashes: [],
+      finalHashes: fallbackResult.value.recentCommits.map((c) => c.hash),
+      decisionsCount: fallbackResult.value.decisions.length,
+      latenciesMs: {
+        total: performance.now() - totalStart,
+      },
+    });
     return;
   }
 
