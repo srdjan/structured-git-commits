@@ -1,6 +1,10 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/assert_equals.ts";
 import { assert } from "https://deno.land/std@0.224.0/assert/assert.ts";
-import { callLocalLlm, extractResponseText, type LocalLlmRequest } from "./local-llm.ts";
+import {
+  callLocalLlm,
+  extractResponseText,
+  type LocalLlmRequest,
+} from "./local-llm.ts";
 
 // ---------------------------------------------------------------------------
 // extractResponseText (pure, no I/O)
@@ -24,6 +28,22 @@ Deno.test("extractResponseText: trims whitespace", () => {
   if (result.ok) assertEquals(result.value, "trimmed");
 });
 
+Deno.test("extractResponseText: joins array content parts", () => {
+  const body = {
+    choices: [{
+      message: {
+        content: [{ type: "text", text: "Hello " }, {
+          type: "text",
+          text: "world",
+        }],
+      },
+    }],
+  };
+  const result = extractResponseText(body);
+  assert(result.ok);
+  if (result.ok) assertEquals(result.value, "Hello world");
+});
+
 Deno.test("extractResponseText: fails on empty choices", () => {
   const result = extractResponseText({ choices: [] });
   assert(!result.ok);
@@ -43,7 +63,10 @@ Deno.test("extractResponseText: fails on null body", () => {
 // callLocalLlm with mock server
 // ---------------------------------------------------------------------------
 
-const makeRequest = (port: number, overrides: Partial<LocalLlmRequest> = {}): LocalLlmRequest => ({
+const makeRequest = (
+  port: number,
+  overrides: Partial<LocalLlmRequest> = {},
+): LocalLlmRequest => ({
   endpoint: `http://localhost:${port}`,
   model: "test-model",
   messages: [{ role: "user", content: "test" }],
@@ -56,7 +79,9 @@ Deno.test("callLocalLlm: successful response", async () => {
   const server = Deno.serve({ port: 0, onListen() {} }, (_req) => {
     return new Response(
       JSON.stringify({
-        choices: [{ message: { role: "assistant", content: '{"scopes":["auth"]}' } }],
+        choices: [{
+          message: { role: "assistant", content: '{"scopes":["auth"]}' },
+        }],
       }),
       { headers: { "Content-Type": "application/json" } },
     );
@@ -134,7 +159,10 @@ Deno.test("callLocalLlm: connection refused returns fail", async () => {
   const result = await callLocalLlm(makeRequest(19999, { timeoutMs: 1000 }));
   assert(!result.ok);
   if (!result.ok) {
-    assert(result.error.message.includes("connection failed") || result.error.message.includes("Connection refused"));
+    assert(
+      result.error.message.includes("connection failed") ||
+        result.error.message.includes("Connection refused"),
+    );
   }
 });
 

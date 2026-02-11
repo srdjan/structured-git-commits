@@ -5,19 +5,27 @@ import {
   buildBridgePrompt,
   buildFollowUpPrompt,
   buildSummarizePrompt,
+  getEffectiveSubcallLimits,
+  type LlmPromptSignals,
   parseAnalyzeResponse,
   parseFollowUpResponse,
-  type LlmPromptSignals,
 } from "./rlm-subcalls.ts";
 
 // ---------------------------------------------------------------------------
 // parseAnalyzeResponse
 // ---------------------------------------------------------------------------
 
-const VALID_SCOPES = new Set(["auth", "auth/login", "hooks", "parser", "graph"]);
+const VALID_SCOPES = new Set([
+  "auth",
+  "auth/login",
+  "hooks",
+  "parser",
+  "graph",
+]);
 
 Deno.test("parseAnalyzeResponse: valid JSON returns parsed signals", () => {
-  const text = '{"scopes": ["auth", "hooks"], "intents": ["fix-defect"], "keywords": ["login"]}';
+  const text =
+    '{"scopes": ["auth", "hooks"], "intents": ["fix-defect"], "keywords": ["login"]}';
   const result = parseAnalyzeResponse(text, VALID_SCOPES);
 
   assertEquals(result.scopes, ["auth", "hooks"]);
@@ -26,35 +34,40 @@ Deno.test("parseAnalyzeResponse: valid JSON returns parsed signals", () => {
 });
 
 Deno.test("parseAnalyzeResponse: filters out invalid scopes", () => {
-  const text = '{"scopes": ["auth", "nonexistent", "hooks"], "intents": [], "keywords": []}';
+  const text =
+    '{"scopes": ["auth", "nonexistent", "hooks"], "intents": [], "keywords": []}';
   const result = parseAnalyzeResponse(text, VALID_SCOPES);
 
   assertEquals(result.scopes, ["auth", "hooks"]);
 });
 
 Deno.test("parseAnalyzeResponse: filters out invalid intents", () => {
-  const text = '{"scopes": [], "intents": ["fix-defect", "not-real", "restructure"], "keywords": []}';
+  const text =
+    '{"scopes": [], "intents": ["fix-defect", "not-real", "restructure"], "keywords": []}';
   const result = parseAnalyzeResponse(text, VALID_SCOPES);
 
   assertEquals(result.intents, ["fix-defect", "restructure"]);
 });
 
 Deno.test("parseAnalyzeResponse: caps scopes at 5", () => {
-  const manyScopes = '{"scopes": ["auth", "auth/login", "hooks", "parser", "graph", "auth"], "intents": [], "keywords": []}';
+  const manyScopes =
+    '{"scopes": ["auth", "auth/login", "hooks", "parser", "graph", "auth"], "intents": [], "keywords": []}';
   const result = parseAnalyzeResponse(manyScopes, VALID_SCOPES);
 
   assert(result.scopes.length <= 5);
 });
 
 Deno.test("parseAnalyzeResponse: caps intents at 2", () => {
-  const text = '{"scopes": [], "intents": ["fix-defect", "restructure", "document"], "keywords": []}';
+  const text =
+    '{"scopes": [], "intents": ["fix-defect", "restructure", "document"], "keywords": []}';
   const result = parseAnalyzeResponse(text, VALID_SCOPES);
 
   assertEquals(result.intents.length, 2);
 });
 
 Deno.test("parseAnalyzeResponse: caps keywords at 5", () => {
-  const text = '{"scopes": [], "intents": [], "keywords": ["a", "b", "c", "d", "e", "f"]}';
+  const text =
+    '{"scopes": [], "intents": [], "keywords": ["a", "b", "c", "d", "e", "f"]}';
   const result = parseAnalyzeResponse(text, VALID_SCOPES);
 
   assertEquals(result.keywords.length, 5);
@@ -77,7 +90,8 @@ Deno.test("parseAnalyzeResponse: missing fields returns empty arrays", () => {
 });
 
 Deno.test("parseAnalyzeResponse: non-string values in arrays are filtered", () => {
-  const text = '{"scopes": ["auth", 42, null], "intents": [true, "fix-defect"], "keywords": ["ok", 99]}';
+  const text =
+    '{"scopes": ["auth", 42, null], "intents": [true, "fix-defect"], "keywords": ["ok", 99]}';
   const result = parseAnalyzeResponse(text, VALID_SCOPES);
 
   assertEquals(result.scopes, ["auth"]);
@@ -85,12 +99,22 @@ Deno.test("parseAnalyzeResponse: non-string values in arrays are filtered", () =
   assertEquals(result.keywords, ["ok"]);
 });
 
+Deno.test("parseAnalyzeResponse: parses fenced JSON with trailing /think", () => {
+  const text =
+    '```json\n{"scopes":["auth"],"intents":["fix-defect"],"keywords":["login"]}\n```\n/think';
+  const result = parseAnalyzeResponse(text, VALID_SCOPES);
+  assertEquals(result.scopes, ["auth"]);
+  assertEquals(result.intents, ["fix-defect"]);
+  assertEquals(result.keywords, ["login"]);
+});
+
 // ---------------------------------------------------------------------------
 // parseFollowUpResponse
 // ---------------------------------------------------------------------------
 
 Deno.test("parseFollowUpResponse: valid queries parsed correctly", () => {
-  const text = '{"queries": [{"scope": "auth", "intent": "fix-defect", "decidedAgainst": null}]}';
+  const text =
+    '{"queries": [{"scope": "auth", "intent": "fix-defect", "decidedAgainst": null}]}';
   const result = parseFollowUpResponse(text, VALID_SCOPES);
 
   assertEquals(result.length, 1);
@@ -107,14 +131,16 @@ Deno.test("parseFollowUpResponse: empty queries when context sufficient", () => 
 });
 
 Deno.test("parseFollowUpResponse: caps at 2 queries", () => {
-  const text = '{"queries": [{"scope": "auth"}, {"scope": "hooks"}, {"scope": "parser"}]}';
+  const text =
+    '{"queries": [{"scope": "auth"}, {"scope": "hooks"}, {"scope": "parser"}]}';
   const result = parseFollowUpResponse(text, VALID_SCOPES);
 
   assert(result.length <= 2);
 });
 
 Deno.test("parseFollowUpResponse: filters out queries with all null fields", () => {
-  const text = '{"queries": [{"scope": null, "intent": null, "decidedAgainst": null}, {"scope": "auth"}]}';
+  const text =
+    '{"queries": [{"scope": null, "intent": null, "decidedAgainst": null}, {"scope": "auth"}]}';
   const result = parseFollowUpResponse(text, VALID_SCOPES);
 
   assertEquals(result.length, 1);
@@ -122,7 +148,8 @@ Deno.test("parseFollowUpResponse: filters out queries with all null fields", () 
 });
 
 Deno.test("parseFollowUpResponse: invalid scope replaced with null", () => {
-  const text = '{"queries": [{"scope": "nonexistent", "intent": "fix-defect"}]}';
+  const text =
+    '{"queries": [{"scope": "nonexistent", "intent": "fix-defect"}]}';
   const result = parseFollowUpResponse(text, VALID_SCOPES);
 
   assertEquals(result.length, 1);
@@ -150,6 +177,47 @@ Deno.test("parseFollowUpResponse: decided-against query", () => {
 Deno.test("parseFollowUpResponse: invalid JSON returns empty array", () => {
   const result = parseFollowUpResponse("broken", VALID_SCOPES);
   assertEquals(result.length, 0);
+});
+
+Deno.test("parseFollowUpResponse: parses wrapped JSON object", () => {
+  const text =
+    'noise before {"queries":[{"scope":"auth","intent":"fix-defect","decidedAgainst":null}]} noise';
+  const result = parseFollowUpResponse(text, VALID_SCOPES);
+  assertEquals(result.length, 1);
+  assertEquals(result[0].scope, "auth");
+  assertEquals(result[0].intent, "fix-defect");
+});
+
+// ---------------------------------------------------------------------------
+// Adaptive limits
+// ---------------------------------------------------------------------------
+
+Deno.test("getEffectiveSubcallLimits: bumps qwen3 limits", () => {
+  const limits = getEffectiveSubcallLimits({
+    version: 1,
+    enabled: true,
+    endpoint: "http://localhost:11434",
+    model: "qwen3:8b",
+    timeoutMs: 5000,
+    maxTokens: 256,
+  });
+
+  assertEquals(limits.timeoutMs, 20000);
+  assertEquals(limits.maxTokens, 1024);
+});
+
+Deno.test("getEffectiveSubcallLimits: preserves non-qwen model limits", () => {
+  const limits = getEffectiveSubcallLimits({
+    version: 1,
+    enabled: true,
+    endpoint: "http://localhost:11434",
+    model: "gemma3:4b",
+    timeoutMs: 5000,
+    maxTokens: 256,
+  });
+
+  assertEquals(limits.timeoutMs, 5000);
+  assertEquals(limits.maxTokens, 256);
 });
 
 // ---------------------------------------------------------------------------

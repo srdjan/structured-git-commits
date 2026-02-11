@@ -211,7 +211,7 @@ const checkModelConnectivity = async (
     endpoint: config.endpoint,
     model,
     messages: [{ role: "user", content: "Reply with exactly: ok" }],
-    maxTokens: 10,
+    maxTokens: Math.max(256, config.maxTokens),
     timeoutMs: config.timeoutMs,
   });
   if (!result.ok) {
