@@ -15,7 +15,12 @@
  *   deno task rlm:configure -- --repl-max-output-tokens=256
  */
 
-import { loadRlmConfig, saveRlmConfig, type RlmConfig } from "./lib/rlm-config.ts";
+import {
+  DEFAULT_CONFIG,
+  loadRlmConfig,
+  type RlmConfig,
+  saveRlmConfig,
+} from "./lib/rlm-config.ts";
 import { callLocalLlm } from "./lib/local-llm.ts";
 
 // ---------------------------------------------------------------------------
@@ -62,14 +67,11 @@ const parseFlags = (args: readonly string[]): CliFlags => {
     else if (arg === "--disable") disable = true;
     else if (arg === "--check") check = true;
     else if (arg.startsWith("--model=")) model = arg.slice("--model=".length);
-    else if (arg.startsWith("--endpoint=")) endpoint = arg.slice("--endpoint=".length);
-    else if (arg.startsWith("--timeout=")) timeout = parseInt(arg.slice("--timeout=".length), 10);
-    else if (arg === "--repl-enable") replEnable = true;
-    else if (arg === "--repl-disable") replDisable = true;
-    else if (arg.startsWith("--repl-max-iterations=")) replMaxIterations = parseIntFlag(arg, "--repl-max-iterations=");
-    else if (arg.startsWith("--repl-max-llm-calls=")) replMaxLlmCalls = parseIntFlag(arg, "--repl-max-llm-calls=");
-    else if (arg.startsWith("--repl-timeout-budget=")) replTimeoutBudget = parseIntFlag(arg, "--repl-timeout-budget=");
-    else if (arg.startsWith("--repl-max-output-tokens=")) replMaxOutputTokens = parseIntFlag(arg, "--repl-max-output-tokens=");
+    else if (arg.startsWith("--endpoint=")) {
+      endpoint = arg.slice("--endpoint=".length);
+    } else if (arg.startsWith("--timeout=")) {
+      timeout = parseInt(arg.slice("--timeout=".length), 10);
+    }
   }
 
   return {
@@ -90,7 +92,7 @@ const checkConnectivity = async (config: RlmConfig): Promise<void> => {
     endpoint: config.endpoint,
     model: config.model,
     messages: [{ role: "user", content: "Reply with exactly: ok" }],
-    maxTokens: 10,
+    maxTokens: Math.max(256, config.maxTokens),
     timeoutMs: config.timeoutMs,
   });
 
@@ -160,7 +162,9 @@ const main = async (): Promise<void> => {
   if (flags.enable) updated = { ...updated, enabled: true };
   if (flags.disable) updated = { ...updated, enabled: false };
   if (flags.model !== null) updated = { ...updated, model: flags.model };
-  if (flags.endpoint !== null) updated = { ...updated, endpoint: flags.endpoint };
+  if (flags.endpoint !== null) {
+    updated = { ...updated, endpoint: flags.endpoint };
+  }
   if (flags.timeout !== null && !isNaN(flags.timeout)) {
     updated = { ...updated, timeoutMs: flags.timeout };
   }

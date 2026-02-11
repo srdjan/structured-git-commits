@@ -31,7 +31,11 @@ export interface LocalLlmRequest {
 // ---------------------------------------------------------------------------
 
 interface OpenAiChoice {
-  readonly message?: { readonly content?: string };
+  readonly message?: {
+    readonly content?:
+      | string
+      | readonly { readonly type?: string; readonly text?: string }[];
+  };
 }
 
 interface OpenAiResponse {
@@ -41,10 +45,20 @@ interface OpenAiResponse {
 export const extractResponseText = (body: unknown): Result<string> => {
   const resp = body as OpenAiResponse;
   const content = resp?.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || content.trim().length === 0) {
-    return Result.fail(new Error("No content in response"));
+
+  if (typeof content === "string" && content.trim().length > 0) {
+    return Result.ok(content.trim());
   }
-  return Result.ok(content.trim());
+
+  if (Array.isArray(content)) {
+    const joined = content
+      .map((part) => (typeof part?.text === "string" ? part.text : ""))
+      .join("")
+      .trim();
+    if (joined.length > 0) return Result.ok(joined);
+  }
+
+  return Result.fail(new Error("No content in response"));
 };
 
 // ---------------------------------------------------------------------------
@@ -83,7 +97,9 @@ export const callLocalLlm = async (
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       return Result.fail(
-        new Error(`LLM request failed ${response.status}: ${text.slice(0, 200)}`),
+        new Error(
+          `LLM request failed ${response.status}: ${text.slice(0, 200)}`,
+        ),
       );
     }
 
@@ -93,7 +109,9 @@ export const callLocalLlm = async (
     clearTimeout(timer);
 
     if (e instanceof DOMException && e.name === "AbortError") {
-      return Result.fail(new Error(`LLM request timed out after ${req.timeoutMs}ms`));
+      return Result.fail(
+        new Error(`LLM request timed out after ${req.timeoutMs}ms`),
+      );
     }
 
     // Connection refused, network error, etc.

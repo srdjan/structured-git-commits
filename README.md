@@ -300,7 +300,7 @@ The system can use a local LLM (Ollama) to enhance git memory context extraction
 ollama pull qwen2.5:7b
 ```
 
-The default model is qwen2.5:7b because it provides a good balance of speed and quality for git context analysis. You can use any Ollama model (llama3.2:3b for faster but less accurate results, or larger models if you have the resources).
+The default model is qwen2.5:7b because it provides a good balance of speed and quality for git context analysis. The system also has first-class support for qwen3 models, which automatically receive higher token limits (1024 vs 256) and longer timeouts (20s vs 5s) to accommodate their extended reasoning chains. You can use any Ollama model (llama3.2:3b for faster but less accurate results, or larger models if you have the resources).
 
 #### Setup
 
@@ -355,6 +355,9 @@ deno task rlm:configure -- --model=llama3.2:3b
 
 # Larger model for better analysis
 deno task rlm:configure -- --model=qwen2.5:14b
+
+# qwen3 models (automatically get 20s timeout and 1024 token limit)
+deno task rlm:configure -- --model=qwen3:8b
 ```
 
 Adjust timeout (if your model is slow to respond):
@@ -419,6 +422,16 @@ deno task context
 ```
 
 And check the output for the mode attribute.
+
+#### JSON Parsing and Model Compatibility
+
+The system includes robust JSON parsing that handles common LLM output variations:
+- Markdown fenced code blocks (```json...```)
+- JSON objects wrapped in surrounding text or commentary
+- Array-based content responses from certain models
+- Trailing /think suffixes
+
+This ensures hook reliability even when models return malformed or decorated JSON. The parsing layer automatically normalizes and extracts valid JSON from noisy responses, preventing hook failures that would otherwise block your workflow.
 
 #### Performance Impact
 

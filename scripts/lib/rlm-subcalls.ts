@@ -17,6 +17,60 @@ import { INTENT_TYPES, Result } from "../types.ts";
 import type { RlmConfig } from "./rlm-config.ts";
 import { callLocalLlm, type ChatMessage } from "./local-llm.ts";
 
+const normalizeJsonPayload = (text: string): string =>
+  text
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .replace(/\s*\/think\s*$/i, "")
+    .trim();
+
+const parseJsonObject = (text: string): Record<string, unknown> | null => {
+  const normalized = normalizeJsonPayload(text);
+  const tryParse = (candidate: string): Record<string, unknown> | null => {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const direct = tryParse(normalized);
+  if (direct) return direct;
+
+  const start = normalized.indexOf("{");
+  const end = normalized.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    return tryParse(normalized.slice(start, end + 1));
+  }
+
+  return null;
+};
+
+export const getEffectiveSubcallLimits = (
+  config: RlmConfig,
+): { readonly timeoutMs: number; readonly maxTokens: number } => {
+  const model = config.model.toLowerCase();
+  const isQwen3 = model.startsWith("qwen3:");
+
+  if (isQwen3) {
+    return {
+      timeoutMs: Math.max(config.timeoutMs, 20_000),
+      maxTokens: Math.max(config.maxTokens, 1_024),
+    };
+  }
+
+  return {
+    timeoutMs: config.timeoutMs,
+    maxTokens: config.maxTokens,
+  };
+};
+
 // ---------------------------------------------------------------------------
 // Sub-call 1: Smart Prompt Analysis
 // ---------------------------------------------------------------------------
@@ -65,7 +119,8 @@ export const parseAnalyzeResponse = (
   validScopes: ReadonlySet<string>,
 ): LlmPromptSignals => {
   try {
-    const data = JSON.parse(text) as Record<string, unknown>;
+    const data = parseJsonObject(text);
+    if (!data) return EMPTY_SIGNALS;
 
     const rawScopes = Array.isArray(data.scopes) ? data.scopes : [];
     const rawIntents = Array.isArray(data.intents) ? data.intents : [];
@@ -77,7 +132,7 @@ export const parseAnalyzeResponse = (
 
     const intents = rawIntents
       .filter((i): i is IntentType =>
-        typeof i === "string" && (INTENT_TYPES as readonly string[]).includes(i),
+        typeof i === "string" && (INTENT_TYPES as readonly string[]).includes(i)
       )
       .slice(0, 2);
 
@@ -96,6 +151,7 @@ export const analyzePromptWithLlm = async (
   prompt: string,
   scopeKeys: readonly string[],
 ): Promise<Result<LlmPromptSignals>> => {
+  const limits = getEffectiveSubcallLimits(config);
   const messages = buildAnalyzePrompt(prompt, scopeKeys);
   const validScopes = new Set(scopeKeys);
 
@@ -103,8 +159,8 @@ export const analyzePromptWithLlm = async (
     endpoint: config.endpoint,
     model: config.model,
     messages,
-    maxTokens: config.maxTokens,
-    timeoutMs: config.timeoutMs,
+    maxTokens: limits.maxTokens,
+    timeoutMs: limits.timeoutMs,
     jsonMode: true,
   });
 
@@ -128,7 +184,8 @@ export const buildFollowUpPrompt = (
 ): readonly ChatMessage[] => [
   {
     role: "system",
-    content: `The user asked a question. Current context was retrieved from git history.
+    content:
+      `The user asked a question. Current context was retrieved from git history.
 If the context is insufficient, suggest 0-2 additional queries to find more relevant information.
 Each query can filter by scope (path like "auth/login"), intent, or decided-against keyword.
 
@@ -149,20 +206,27 @@ export const parseFollowUpResponse = (
   validScopes: ReadonlySet<string>,
 ): readonly FollowUpQuery[] => {
   try {
-    const data = JSON.parse(text) as Record<string, unknown>;
+    const data = parseJsonObject(text);
+    if (!data) return [];
     const rawQueries = Array.isArray(data.queries) ? data.queries : [];
 
     return rawQueries
       .slice(0, 2)
       .map((q: Record<string, unknown>) => ({
-        scope: typeof q.scope === "string" && validScopes.has(q.scope) ? q.scope : null,
+        scope: typeof q.scope === "string" && validScopes.has(q.scope)
+          ? q.scope
+          : null,
         intent: typeof q.intent === "string" &&
-          (INTENT_TYPES as readonly string[]).includes(q.intent)
+            (INTENT_TYPES as readonly string[]).includes(q.intent)
           ? (q.intent as IntentType)
           : null,
-        decidedAgainst: typeof q.decidedAgainst === "string" ? q.decidedAgainst : null,
+        decidedAgainst: typeof q.decidedAgainst === "string"
+          ? q.decidedAgainst
+          : null,
       }))
-      .filter((q) => q.scope !== null || q.intent !== null || q.decidedAgainst !== null);
+      .filter((q) =>
+        q.scope !== null || q.intent !== null || q.decidedAgainst !== null
+      );
   } catch {
     return [];
   }
@@ -174,14 +238,15 @@ export const generateFollowUpQueries = async (
   currentContext: string,
   validScopes: ReadonlySet<string>,
 ): Promise<Result<readonly FollowUpQuery[]>> => {
+  const limits = getEffectiveSubcallLimits(config);
   const messages = buildFollowUpPrompt(prompt, currentContext);
 
   const result = await callLocalLlm({
     endpoint: config.endpoint,
     model: config.model,
     messages,
-    maxTokens: config.maxTokens,
-    timeoutMs: config.timeoutMs,
+    maxTokens: limits.maxTokens,
+    timeoutMs: limits.timeoutMs,
     jsonMode: true,
   });
 
@@ -199,7 +264,8 @@ export const buildSummarizePrompt = (
 ): readonly ChatMessage[] => [
   {
     role: "system",
-    content: `Summarize the most relevant information from git history for the user's task.
+    content:
+      `Summarize the most relevant information from git history for the user's task.
 Write 3-5 concise lines highlighting:
 - Recent relevant changes
 - Decisions that constrain the approach
@@ -219,14 +285,15 @@ export const summarizeContext = async (
   prompt: string,
   fullContext: string,
 ): Promise<Result<string>> => {
+  const limits = getEffectiveSubcallLimits(config);
   const messages = buildSummarizePrompt(prompt, fullContext);
 
   return await callLocalLlm({
     endpoint: config.endpoint,
     model: config.model,
     messages,
-    maxTokens: config.maxTokens,
-    timeoutMs: config.timeoutMs,
+    maxTokens: limits.maxTokens,
+    timeoutMs: limits.timeoutMs,
   });
 };
 
@@ -242,7 +309,8 @@ export const buildBridgePrompt = (
 ): readonly ChatMessage[] => [
   {
     role: "system",
-    content: `A developer ran a git query. Highlight the most important related context they should know about.
+    content:
+      `A developer ran a git query. Highlight the most important related context they should know about.
 Focus on: decisions that constrain their approach, patterns in sibling scopes, potential conflicts.
 Write 2-4 concise lines.`,
   },
@@ -267,6 +335,7 @@ export const analyzeBridgeContext = async (
   relatedDecisions: string,
   siblingScopes: string,
 ): Promise<Result<string>> => {
+  const limits = getEffectiveSubcallLimits(config);
   const messages = buildBridgePrompt(
     queryCommand,
     queryResults,
@@ -278,7 +347,7 @@ export const analyzeBridgeContext = async (
     endpoint: config.endpoint,
     model: config.model,
     messages,
-    maxTokens: config.maxTokens,
-    timeoutMs: config.timeoutMs,
+    maxTokens: limits.maxTokens,
+    timeoutMs: limits.timeoutMs,
   });
 };

@@ -86,6 +86,8 @@
   - Prompt analysis uses the LLM instead of keyword matching
   - Follow-up queries are generated automatically (recursive sub-calls)
   - Bridge context is summarized by the LLM
+  - Robust JSON parsing handles markdown fences, wrapped objects, and array content
+  - Adaptive limits for qwen3 models (20s timeout, 1024 tokens vs 5s/256 default)
 
   Setup (requires Ollama installed and running):
     ollama pull qwen2.5:7b
