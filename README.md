@@ -1,4 +1,4 @@
-# Structured Git Commits
+# RLM Git Commits
 <p align="center">
   <img src="assets/gitlogs.jpg" width="400" alt="Git Commit Logs - Structural Data Systems">
 </p>

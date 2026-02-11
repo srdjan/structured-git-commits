@@ -1,5 +1,5 @@
 /**
- * Git Hook Installer for Structured Commits
+ * Git Hook Installer for RLM Commits
  *
  * Installs the commit-msg validation hook into the local or global git
  * hooks directory. Detects existing hooks and chains them.
@@ -13,7 +13,7 @@
  */
 
 const HOOK_SHIM = `#!/bin/sh
-# Structured Git Commits - commit-msg hook
+# RLM Git Commits - commit-msg hook
 # Validates commit messages against the structured commits specification.
 # Installed by: deno task hook:install
 
@@ -31,7 +31,7 @@ deno run --allow-read "$(dirname "$0")/../../scripts/validate-commit.ts" "$1"
 `;
 
 const GLOBAL_HOOK_SHIM = `#!/bin/sh
-# Structured Git Commits - commit-msg hook (global)
+# RLM Git Commits - commit-msg hook (global)
 # Validates commit messages against the structured commits specification.
 # Installed by: deno task hook:install --global
 
@@ -101,7 +101,7 @@ const installHook = async (
   // If existing hook, back it up
   if (await fileExists(hookPath)) {
     const existing = await Deno.readTextFile(hookPath);
-    if (existing.includes("Structured Git Commits")) {
+    if (existing.includes("RLM Git Commits")) {
       console.log("Hook already installed. Reinstalling.");
     } else {
       const backupPath = `${hookPath}.original`;
@@ -131,7 +131,7 @@ const uninstallHook = async (hooksDir: string): Promise<void> => {
   }
 
   const content = await Deno.readTextFile(hookPath);
-  if (!content.includes("Structured Git Commits")) {
+  if (!content.includes("RLM Git Commits")) {
     console.error("Hook at", hookPath, "was not installed by this tool.");
     Deno.exit(1);
   }

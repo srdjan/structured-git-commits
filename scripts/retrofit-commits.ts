@@ -1,5 +1,5 @@
 /**
- * Structured Git Commit Retrofit Utility
+ * RLM Git Commit Retrofit Utility
  *
  * Generates structured commit messages for existing unstructured commits
  * by extracting minimal commit information and using Claude to reformat.

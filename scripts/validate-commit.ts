@@ -1,5 +1,5 @@
 /**
- * Structured Commit Validator - CLI
+ * RLM Commit Validator - CLI
  *
  * Validates a commit message against the structured git commits specification.
  * Can be used as a git commit-msg hook or standalone validator.
