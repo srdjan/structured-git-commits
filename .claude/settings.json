@@ -5,29 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "deno run --allow-run --allow-read --allow-env --allow-net scripts/git-memory-context.ts"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "deno run --allow-run --allow-read --allow-env --allow-net scripts/git-memory-bridge.ts",
-            "async": true
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "deno run --allow-run --allow-read --allow-write --allow-env scripts/git-memory-consolidate.ts"
+            "command": "deno run --allow-run --allow-read --allow-env scripts/git-memory-context.ts"
           }
         ]
       }

@@ -1,5 +1,5 @@
 /**
- * RLM Git Commit Parser - CLI
+ * Structured Git Commit Parser - CLI
  *
  * Thin CLI wrapper over the composable query library.
  * Parses git log output into structured commit objects with typed trailers.

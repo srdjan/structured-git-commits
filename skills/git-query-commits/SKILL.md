@@ -31,26 +31,20 @@ Do NOT query history for:
 - Cases where the user has already provided complete context
 - Simple, well-understood changes that don't touch existing logic
 
-## Automatic Context via Hooks
+## Automatic Context via Hook
 
-Three Claude Code hooks implement the RLM (Recursive Language Model) pattern, treating git history as an external environment that the LLM queries recursively rather than consuming all at once. The hooks provide automatic context without requiring active queries.
+When installed as a Claude Code project, a `UserPromptSubmit` hook automatically injects recent git history context before every prompt. This provides a passive floor of always-available information without requiring the agent to actively decide to query.
 
 **What gets injected:**
 
-The `UserPromptSubmit` hook produces a `<git-memory-context>` block in one of three modes:
-- *llm-enhanced*: a local LLM (Ollama) analyzes the prompt, extracts scopes and intents, generates follow-up queries against the index, and summarizes the merged results
-- *prompt-aware*: keyword-based extraction of scopes/intents from the prompt, matched against trailer index scope keys
-- *recency*: the N most recent commits with decided-against entries (fallback when no signals match or no index exists)
-
-A `<working-memory>` block is also injected when session-scoped entries exist (findings, decisions, hypotheses, TODOs persisted via `deno task memory:write`).
-
-The `PostToolUse` bridge hook fires after `deno task parse` queries, surfacing related decided-against entries and sibling scopes in a `<git-memory-bridge>` block.
-
-The `Stop` hook consolidates working memory into a session summary when a session ends.
+The hook produces a `<git-memory-context>` block containing:
+- Recent decided-against entries with their scopes (up to 20)
+- Recent commit subjects with scopes (last 10)
+- Current session info if `STRUCTURED_GIT_SESSION` is set
 
 **How it works:**
 
-The context hook (`scripts/git-memory-context.ts`) first checks for an RLM config (`enabled: true`) and attempts the LLM-enhanced path. On any failure, it falls through to keyword-based prompt analysis using the trailer index. If the index is stale or missing, it falls back to `git log` with `parseCommitBlock`. The script always exits 0 and produces empty output on errors, so it never blocks the user.
+The hook script (`scripts/git-memory-context.ts`) loads the trailer index for fast file-based lookups. If the index is stale or missing, it falls back to `git log` with `parseCommitBlock`. The script always exits 0 and produces empty output on errors, so it never blocks the user.
 
 **How it complements manual queries:**
 
@@ -58,17 +52,10 @@ The auto-injected context is a compact summary - enough to know that relevant hi
 
 **Installing in other projects:**
 
-1. Copy the scripts directory into the target project. Core files needed:
-   - `scripts/types.ts`, `scripts/build-trailer-index.ts`
-   - `scripts/git-memory-context.ts`, `scripts/git-memory-bridge.ts`, `scripts/git-memory-consolidate.ts`
-   - `scripts/working-memory-write.ts`, `scripts/rlm-configure.ts`
-   - `scripts/lib/parser.ts`, `scripts/lib/matching.ts`, `scripts/lib/prompt-analyzer.ts`
-   - `scripts/lib/working-memory.ts`, `scripts/lib/command-parser.ts`, `scripts/lib/consolidation.ts`
-   - `scripts/lib/rlm-config.ts`, `scripts/lib/local-llm.ts`, `scripts/lib/rlm-subcalls.ts`
-2. Copy `.claude/settings.json` with all three hook definitions (UserPromptSubmit, PostToolUse, Stop)
-3. Add the full `CLAUDE.md` contents (git-memory, working-memory, git-memory-bridge, memory-consolidation, rlm-local-llm sections) to the project's own CLAUDE.md
-4. Add the deno tasks (`context`, `memory:write`, `memory:clear`, `memory:consolidate`, `rlm:configure`) to the project's `deno.json`
-5. Ensure `deno` is available in the project environment
+1. Copy `scripts/git-memory-context.ts` and its dependencies (`scripts/types.ts`, `scripts/lib/parser.ts`, `scripts/build-trailer-index.ts`) into the target project
+2. Create `.claude/settings.json` with the `UserPromptSubmit` hook pointing to the script
+3. Add the `<git-memory>` section from `CLAUDE.md` to the project's own CLAUDE.md
+4. Ensure `deno` is available in the project environment
 
 ## Query Patterns by Scenario
 

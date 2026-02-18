@@ -9,7 +9,7 @@ description: >
   without external memory infrastructure.
 ---
 
-# RLM Git Commits
+# Structured Git Commits
 
 ## Purpose
 

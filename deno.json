@@ -2,7 +2,7 @@
   "tasks": {
     "validate": "deno run --allow-read scripts/validate-commit.ts",
     "parse": "deno run --allow-run --allow-read scripts/parse-commits.ts",
-    "test": "deno test --unstable-worker-options --allow-read --allow-run --allow-write --allow-net",
+    "test": "deno test --allow-read --allow-run --allow-write",
     "hook:install": "deno run --allow-read --allow-write --allow-run scripts/install-hooks.ts",
     "retrofit": "deno run --allow-read --allow-run --allow-write --allow-env --allow-net scripts/retrofit-commits.ts",
     "graph:write": "deno run --allow-run --allow-read scripts/maintain-commit-graph.ts",
@@ -11,15 +11,6 @@
     "index:build": "deno run --allow-run --allow-read --allow-write scripts/build-trailer-index.ts",
     "index:check": "deno run --allow-run --allow-read scripts/build-trailer-index.ts --check",
     "optimize": "deno run --allow-run --allow-read scripts/maintain-commit-graph.ts && deno run --allow-run --allow-read --allow-write scripts/build-trailer-index.ts",
-    "context": "deno run --allow-run --allow-read --allow-env --allow-net scripts/git-memory-context.ts",
-    "memory:write": "deno run --allow-run --allow-read --allow-write --allow-env scripts/working-memory-write.ts",
-    "memory:clear": "deno run --allow-run --allow-read --allow-write scripts/working-memory-write.ts --clear",
-    "memory:consolidate": "deno run --allow-run --allow-read --allow-write --allow-env scripts/git-memory-consolidate.ts",
-    "rlm:configure": "deno run --allow-run --allow-read --allow-write --allow-net scripts/rlm-configure.ts",
-    "rlm:install": "deno run --allow-read --allow-write --allow-run scripts/install-rlm.ts",
-    "bench:context": "deno run --allow-run --allow-read --allow-write --allow-env --allow-net scripts/benchmark-context.ts",
-    "bench:score:retrieval": "deno run --allow-read --allow-write scripts/benchmark-score-retrieval.ts",
-    "bench:responses": "deno run --allow-read --allow-write --allow-env --allow-net scripts/benchmark-generate-responses.ts",
-    "bench:score:responses": "deno run --allow-read --allow-write --allow-env --allow-net scripts/benchmark-score-responses.ts"
+    "context": "deno run --allow-run --allow-read --allow-env scripts/git-memory-context.ts"
   }
 }

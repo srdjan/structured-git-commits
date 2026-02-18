@@ -311,14 +311,14 @@ git log -1 --format='%(trailers:key=Intent,valueonly)' <hash>
 git log -50 --format='%(trailers:key=Intent,valueonly)' | sort | uniq -c | sort -rn
 ```
 
-## The RLM Hook System
+## The Auto-Context Hook
 
-Three Claude Code hooks implement the RLM (Recursive Language Model) pattern - the LLM treats git history as an external environment and recursively queries it rather than consuming it all at once. On every prompt, Claude receives a compact summary of git history context, working memory from the current session, and bridge context after queries - all without active querying. Together, the three hooks form the environment-query-memory loop described in the [RLM paper](https://arxiv.org/abs/2512.24601).
+The auto-context hook implements the RLM (Retrieval-augmented Language Model) pattern: on every Claude Code prompt, a `UserPromptSubmit` hook injects a compact summary of recent git history. Claude sees recent commits, decided-against entries, and session info without having to actively query.
 
 This creates two tiers of context:
 
-- **Passive floor** (automatic): hooks inject history, decisions, and session state. Claude sees it and judges relevance.
-- **Active exploration** (agent-directed): when the passive context suggests relevant history exists, Claude runs deeper queries using `deno task parse`. A bridge hook then surfaces related context the query did not directly ask for.
+- **Passive floor** (automatic): the hook dumps recent history regardless of what you ask. Claude sees it and judges relevance.
+- **Active exploration** (agent-directed): when the passive context suggests relevant history exists, Claude runs deeper queries using `deno task parse`.
 
 ### Setup
 
@@ -332,29 +332,7 @@ The hook configuration is already in `.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "deno run --allow-run --allow-read --allow-env --allow-net scripts/git-memory-context.ts"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "deno run --allow-run --allow-read --allow-env --allow-net scripts/git-memory-bridge.ts",
-            "async": true
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "deno run --allow-run --allow-read --allow-write --allow-env scripts/git-memory-consolidate.ts"
+            "command": "deno run --allow-run --allow-read --allow-env scripts/git-memory-context.ts"
           }
         ]
       }
@@ -363,28 +341,16 @@ The hook configuration is already in `.claude/settings.json`:
 }
 ```
 
-The companion instructions in `CLAUDE.md` tell Claude how to interpret the injected context, use working memory, and respond to bridge context.
+The companion instructions in `CLAUDE.md` tell Claude how to interpret the injected context and when to query deeper.
 
 ### How It Works
 
-The context hook (`scripts/git-memory-context.ts`) operates in three modes:
-
-1. **llm-enhanced**: when a local LLM is configured (Ollama), the hook uses it to analyze the prompt, extract scopes and intents, generate follow-up queries, and summarize the merged context. Enable with `deno task rlm:configure -- --enable`.
-2. **prompt-aware**: keyword-based extraction matches tokens from the prompt against trailer index scope keys and an intent synonym table. This is the default when the trailer index exists.
-3. **recency**: falls back to the N most recent commits when no signals match or no index exists.
-
-The hook also injects a `<working-memory>` block with session-scoped findings, decisions, and hypotheses persisted via `deno task memory:write`.
-
-The bridge hook (`scripts/git-memory-bridge.ts`) fires after `deno task parse` queries. It surfaces decided-against entries in the queried scope and sibling scopes with the same intent. When LLM mode is enabled, the output is summarized by the local model.
-
-The stop hook (`scripts/git-memory-consolidate.ts`) consolidates working memory into a session summary at `.git/info/session-summary-{slug}.md` when a session ends.
-
-All hooks exit 0 on errors and never block the user.
+The hook script loads the trailer index (a precomputed inverted index at `.git/info/trailer-index.json`) for O(1) lookups. If the index is stale or missing, it falls back to parsing recent `git log` output. The script completes in about 35ms and always exits 0 - it never blocks your prompt.
 
 The output is a `<git-memory-context>` block that Claude sees:
 
 ```
-<git-memory-context mode="prompt-aware">
+<git-memory-context>
 Recent decisions (decided-against):
 - [auth/registration] OAuth2 client credentials (no hardware binding guarantee)
 - [api/webhooks] idempotency key at receiver (shifts burden to consumers)
